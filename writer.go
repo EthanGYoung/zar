@@ -132,12 +132,12 @@ func (z *zarManager) WriteHeader() error {
 func writeImage(dir string, output string) {
 	z := &zarManager{}
 	z.writer.Init(output)
-	walkDir(dir, z)
+	walkDir(dir, dir, z)
 	z.WriteHeader()
 }
-func walkDir(dir string, z *zarManager) {
-	fmt.Printf("including folder: %v\n", dir)
-	z.IncludeFolderBegin(dir)
+func walkDir(dir string, foldername string, z *zarManager) {
+	fmt.Printf("including folder: %v, name: %v\n", dir, foldername)
+	z.IncludeFolderBegin(foldername)
 	files, err := ioutil.ReadDir(dir)
 	if err != nil {
 		log.Fatalf("walk dir unknown err when processing dir %v", dir)
@@ -148,7 +148,7 @@ func walkDir(dir string, z *zarManager) {
 			fmt.Printf("including file: %v\n", name)
 			z.IncludeFile(name, dir)
 		} else {
-			walkDir(path.Join(dir, name), z)
+			walkDir(path.Join(dir, name), name, z)
 		}
 	}
 	z.IncludeFolderEnd()
