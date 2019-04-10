@@ -51,7 +51,7 @@ func (w *fileWriter) Init(fn string) error {
 
 func (w *fileWriter) Write(data []byte) (int, error) {
 	n, err := w.zarw.Write(data)
-	fmt.Printf("Write data %v to file, old count: %v, length: %v\n", data, w.count, n)
+	//fmt.Printf("Write data %v to file, old count: %v, length: %v\n", data, w.count, n)
 	w.count += int64(n)
 
 	return n, err
