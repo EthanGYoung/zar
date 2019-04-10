@@ -92,6 +92,24 @@ func (z *zarManager) IncludeFile(fn string, basedir string) (int, error) {
 	return n, err
 }
 
+func (z *zarManager) IncludeFolderBegin(name string) {
+	h := &fileMetadata{
+			Begin : -1,
+			End	  : -1,
+			Name  : name,
+	}
+	z.metadata = append(z.metadata, *h)
+}
+
+func (z *zarManager) IncludeFolderEnd() {
+	h := &fileMetadata{
+			Begin : -1,
+			End	  : -1,
+			Name  : "..",
+	}
+	z.metadata = append(z.metadata, *h)
+}
+
 func (z *zarManager) WriteHeader() error {
 	headerLoc := z.writer.count
 	mEnc := gob.NewEncoder(z.writer.zarw)
@@ -111,23 +129,29 @@ func (z *zarManager) WriteHeader() error {
 	return nil
 }
 
-func walkDir(dir string, output string) error {
+func writeImage(dir string, output string) {
 	z := &zarManager{}
 	z.writer.Init(output)
+	walkDir(dir, z)
+	z.WriteHeader()
+}
+func walkDir(dir string, z *zarManager) {
+	fmt.Printf("including folder: %v\n", dir)
+	z.IncludeFolderBegin(dir)
 	files, err := ioutil.ReadDir(dir)
 	if err != nil {
 		log.Fatalf("walk dir unknown err when processing dir %v", dir)
-		return err
 	}
 	for _, file := range files {
+		name := file.Name()
 		if !file.IsDir() {
-			name := file.Name()
 			fmt.Printf("including file: %v\n", name)
 			z.IncludeFile(name, dir)
+		} else {
+			walkDir(path.Join(dir, name), z)
 		}
 	}
-	z.WriteHeader()
-	return nil
+	z.IncludeFolderEnd()
 }
 
 func readImage(img string) error {
@@ -168,9 +192,13 @@ func readImage(img string) error {
 	}
 	fmt.Println(metadata)
 	for _, v := range metadata {
-		fileBytes := mmap[v.Begin : v.End]
-		fileString := string(fileBytes)
-		fmt.Printf("file: %v, data: %v\n", v.Name, fileString)
+		if v.Begin == -1 {
+			fmt.Printf("enter folder: %v\n", v.Name)
+		} else {
+			fileBytes := mmap[v.Begin : v.End]
+			fileString := string(fileBytes)
+			fmt.Printf("file: %v, data: %v\n", v.Name, fileString)
+		}
 	}
 	return nil
 }
@@ -187,7 +215,7 @@ func main() {
 
 	if *writeModePtr {
 		fmt.Printf("dir selected: %v\n", *dirPtr)
-		walkDir(*dirPtr, *outputPtr)
+		writeImage(*dirPtr, *outputPtr)
 	}
 
 	if (*readModePtr) {
