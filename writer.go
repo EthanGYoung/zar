@@ -29,6 +29,7 @@ type fileMetadata struct {
 }
 
 type zarManager struct {
+ pagealign bool
  writer fileWriter
  metadata []fileMetadata
 }
@@ -49,18 +50,33 @@ func (w *fileWriter) Init(fn string) error {
 	return nil
 }
 
-func (w *fileWriter) Write(data []byte) (int, error) {
+func (w *fileWriter) Write(data []byte, pagealign bool) (int, error) {
 	n, err := w.zarw.Write(data)
-	//fmt.Printf("Write data %v to file, old count: %v, length: %v\n", data, w.count, n)
-	w.count += int64(n)
+	if err != nil {
+		return n, err
+	}
 
-	return n, err
+	n2 := 0
+	if pagealign {
+		const align = 4096
+		pad := align - n % align
+		fmt.Printf("current write size: %v, padding size: %v\n", n, pad)
+		if pad > 0 {
+			s := make([]byte, pad)
+			n2, err = w.zarw.Write(s)
+		}
+	}
+
+	//fmt.Printf("Write data %v to file, old count: %v, length: %v\n", data, w.count, n)
+	w.count += int64(n + n2)
+
+	return n + n2, err
 }
 
 func (w *fileWriter) WriteInt64(v int64) (int, error) {
 	buf := make([]byte, binary.MaxVarintLen64)
 	binary.PutVarint(buf, v)
-	n, err := w.Write(buf)
+	n, err := w.Write(buf, false)
 	w.count += int64(n)
 	return n, err
 }
@@ -78,11 +94,12 @@ func (z *zarManager) IncludeFile(fn string, basedir string) (int, error) {
 		return 0, nil
 	}
 	oldCounter := z.writer.count
-	n, err := z.writer.Write(content)
+	n, err := z.writer.Write(content, z.pagealign)
 	if err != nil {
 			log.Fatalf("can't write to file")
 			return 0, err
 	}
+
 	h := &fileMetadata{
 			Begin : oldCounter,
 			End	  : z.writer.count,
@@ -129,15 +146,18 @@ func (z *zarManager) WriteHeader() error {
 	return nil
 }
 
-func writeImage(dir string, output string) {
-	z := &zarManager{}
+func writeImage(dir string, output string, pagealign bool) {
+	z := &zarManager{pagealign:pagealign}
 	z.writer.Init(output)
-	walkDir(dir, dir, z)
+	walkDir(dir, dir, z, true)
 	z.WriteHeader()
 }
-func walkDir(dir string, foldername string, z *zarManager) {
-	fmt.Printf("including folder: %v, name: %v\n", dir, foldername)
-	z.IncludeFolderBegin(foldername)
+
+func walkDir(dir string, foldername string, z *zarManager, root bool) {
+	if !root {
+		fmt.Printf("including folder: %v, name: %v\n", dir, foldername)
+		z.IncludeFolderBegin(foldername)
+	}
 	files, err := ioutil.ReadDir(dir)
 	if err != nil {
 		log.Fatalf("walk dir unknown err when processing dir %v", dir)
@@ -148,10 +168,12 @@ func walkDir(dir string, foldername string, z *zarManager) {
 			fmt.Printf("including file: %v\n", name)
 			z.IncludeFile(name, dir)
 		} else {
-			walkDir(path.Join(dir, name), name, z)
+			walkDir(path.Join(dir, name), name, z, false)
 		}
 	}
-	z.IncludeFolderEnd()
+	if !root {
+		z.IncludeFolderEnd()
+	}
 }
 
 func readImage(img string) error {
@@ -211,11 +233,12 @@ func main() {
 	outputPtr := flag.String("o", "test.img", "output img name")
 	writeModePtr := flag.Bool("w", false, "generate image mode")
 	readModePtr := flag.Bool("r", false, "read image mode")
+	pageAlignPtr := flag.Bool("pagealign", false, "align the page")
 	flag.Parse()
 
 	if *writeModePtr {
 		fmt.Printf("dir selected: %v\n", *dirPtr)
-		writeImage(*dirPtr, *outputPtr)
+		writeImage(*dirPtr, *outputPtr, *pageAlignPtr)
 	}
 
 	if (*readModePtr) {
