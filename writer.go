@@ -59,7 +59,7 @@ func (w *fileWriter) Write(data []byte, pagealign bool) (int, error) {
 	n2 := 0
 	if pagealign {
 		const align = 4096
-		pad := align - n % align
+		pad := (align - n % align) % 4096
 		fmt.Printf("current write size: %v, padding size: %v\n", n, pad)
 		if pad > 0 {
 			s := make([]byte, pad)
