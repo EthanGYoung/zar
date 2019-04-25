@@ -49,11 +49,11 @@ func (w *fileWriter) Init(fn string) error {
 	w.zarw = bufio.NewWriter(f)
 	return nil
 }
-
-func (w *fileWriter) Write(data []byte, pagealign bool) (int, error) {
+// NOTE: in the new version fileWriter.Writer return the "real" end
+func (w *fileWriter) Write(data []byte, pagealign bool) (int64, error) {
 	n, err := w.zarw.Write(data)
 	if err != nil {
-		return n, err
+		return int64(n), err
 	}
 
 	n2 := 0
@@ -68,12 +68,13 @@ func (w *fileWriter) Write(data []byte, pagealign bool) (int, error) {
 	}
 
 	//fmt.Printf("Write data %v to file, old count: %v, length: %v\n", data, w.count, n)
+	realEnd := w.count + int64(n)
 	w.count += int64(n + n2)
 
-	return n + n2, err
+	return realEnd, err
 }
 
-func (w *fileWriter) WriteInt64(v int64) (int, error) {
+func (w *fileWriter) WriteInt64(v int64) (int64, error) {
 	buf := make([]byte, binary.MaxVarintLen64)
 	binary.PutVarint(buf, v)
 	n, err := w.Write(buf, false)
@@ -87,14 +88,14 @@ func (w *fileWriter) Close() error {
 	return w.f.Close()
 }
 
-func (z *zarManager) IncludeFile(fn string, basedir string) (int, error) {
+func (z *zarManager) IncludeFile(fn string, basedir string) (int64, error) {
 	content, err := ioutil.ReadFile(path.Join(basedir, fn))
 	if err != nil {
 		log.Fatalf("can't include file %v, err: %v", fn, err)
 		return 0, nil
 	}
 	oldCounter := z.writer.count
-	n, err := z.writer.Write(content, z.pagealign)
+	real_end, err := z.writer.Write(content, z.pagealign)
 	if err != nil {
 			log.Fatalf("can't write to file")
 			return 0, err
@@ -102,11 +103,11 @@ func (z *zarManager) IncludeFile(fn string, basedir string) (int, error) {
 
 	h := &fileMetadata{
 			Begin : oldCounter,
-			End	  : z.writer.count,
+			End	  : real_end,
 			Name  : fn,
 	}
 	z.metadata = append(z.metadata, *h)
-	return n, err
+	return real_end, err
 }
 
 func (z *zarManager) IncludeFolderBegin(name string) {
