@@ -177,7 +177,7 @@ func walkDir(dir string, foldername string, z *zarManager, root bool) {
 	}
 }
 
-func readImage(img string) error {
+func readImage(img string, detail bool) error {
 	f, err := os.Open(img)
 	if err != nil {
 		log.Fatalf("can't open image file %v, err: %v", img, err)
@@ -193,7 +193,9 @@ func readImage(img string) error {
 	if err != nil {
 		log.Fatalf("can't mmap the image file, err: %v", err)
 	}
-	fmt.Println("MMAP data:", mmap)
+	if detail {
+		fmt.Println("MMAP data:", mmap)
+	}
 	headerLoc := mmap[length - 10 : length]
 	fmt.Println("header data:", headerLoc)
 	headerReader := bytes.NewReader(headerLoc)
@@ -218,8 +220,13 @@ func readImage(img string) error {
 		if v.Begin == -1 {
 			fmt.Printf("enter folder: %v\n", v.Name)
 		} else {
-			fileBytes := mmap[v.Begin : v.End]
-			fileString := string(fileBytes)
+			var fileString string
+			if detail {
+				fileBytes := mmap[v.Begin : v.End]
+				fileString = string(fileBytes)
+			} else {
+				fileString = "ignored"
+			}
 			fmt.Printf("file: %v, data: %v\n", v.Name, fileString)
 		}
 	}
@@ -235,6 +242,7 @@ func main() {
 	writeModePtr := flag.Bool("w", false, "generate image mode")
 	readModePtr := flag.Bool("r", false, "read image mode")
 	pageAlignPtr := flag.Bool("pagealign", false, "align the page")
+	detailModePtr := flag.Bool("detail", false, "show original context when read")
 	flag.Parse()
 
 	if *writeModePtr {
@@ -244,6 +252,6 @@ func main() {
 
 	if (*readModePtr) {
 		fmt.Printf("img selected: %v\n", *imgPtr)
-		readImage(*imgPtr)
+		readImage(*imgPtr, *detailModePtr)
 	}
 }
