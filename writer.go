@@ -12,6 +12,7 @@ import (
 	"io/ioutil"
 	"log"
 	"path"
+	"path/filepath"
 	"os"
 	"syscall"
 )
@@ -163,13 +164,34 @@ func walkDir(dir string, foldername string, z *zarManager, root bool) {
 	if err != nil {
 		log.Fatalf("walk dir unknown err when processing dir %v", dir)
 	}
-	for _, file := range files {
+	for _, cur_file := range files {
+		var file os.FileInfo
+		file = cur_file
 		name := file.Name()
+		symlink := file.Mode() & os.ModeSymlink != 0
+		file_path := path.Join(dir, name)
+		
+		if symlink {
+			fmt.Printf("%v is symlink.", file_path)
+			real_dest, err := os.Readlink(file_path)
+			if !filepath.IsAbs(real_dest) {
+				real_dest = path.Join(dir, real_dest)
+			}
+			real_dest_file, err := os.Open(real_dest)
+			if err != nil {
+				log.Fatalf("error. Can't open symlink file. %v", real_dest)
+			}
+			file, err = real_dest_file.Stat()
+			if err != nil {
+				log.Fatalf("error. Can't get symlink file stat. %v", real_dest)
+			}
+		}
+	    
 		if !file.IsDir() {
 			fmt.Printf("including file: %v\n", name)
 			z.IncludeFile(name, dir)
 		} else {
-			walkDir(path.Join(dir, name), name, z, false)
+			walkDir(file_path, name, z, false)
 		}
 	}
 	if !root {
