@@ -20,7 +20,7 @@ const (
 	pageBoundary = 4096	// The boundary that needs to be upheld for page alignment
 )
 
-// TODO 
+// TODO
 // Add new struct for walking directories
 // Can have one that will do a breadth first search based on current implementation
 // Can have another that will walk based on a yaml file uploaded
@@ -31,7 +31,7 @@ type fileWriter struct {
 	// zarw is used as the writer to the file f
 	zarw *bufio.Writer
 
-	// Count is the cumulative bytes written to the file f 
+	// Count is the cumulative bytes written to the file f
 	count int64
 
 	// f is the file object that the writer will write to
@@ -122,7 +122,7 @@ type Manager interface {
 	// Parameter (dir) 		: name of path relative to root dir
 	// parameter (foldername) 	: name of current folder
 	// parameter (root)		: whether or not dir is the root dir
-	WalkDir(dir string, foldername string, root bool)
+	WalkDir(dir string, foldername string, root bool, dirLastOrder bool)
 
 	// IncludeFolderBegin initializes metadata for the beginning of a file
 	//
@@ -171,7 +171,7 @@ type fileMetadata struct {
 
 // TODO: Change this to breadth first search to see difference (Change to an interface to implement diff types)
 // WalkDir implemented Manager.WalkDir
-func (z *zarManager) WalkDir(dir string, foldername string, root bool) {
+func (z *zarManager) WalkDir(dir string, foldername string, root bool, dirLastOrder bool) {
 	// root dir not marked as directory
 	if !root {
 		fmt.Printf("including folder: %v, name: %v\n", dir, foldername)
@@ -193,14 +193,20 @@ func (z *zarManager) WalkDir(dir string, foldername string, root bool) {
 			fmt.Printf("including file: %v\n", name)
 			z.IncludeFile(name, dir)
 		} else {
-			dirs = append(dirs, name)
+			if dirLastOrder {
+				dirs = append(dirs, name)
+			} else {
+				z.WalkDir(path.Join(dir, name), name, false, dirLastOrder)
+			}
 		}
 	}
 
 	// Recursively search each directory (DFS)
 	// After file processing to improve spatial locatlity for files
-	for _, subDir := range dirs {
-		z.WalkDir(path.Join(dir, subDir), subDir, false)
+	if dirLastOrder {
+		for _, subDir := range dirs {
+			z.WalkDir(path.Join(dir, subDir), subDir, false, dirLastOrder)
+		}
 	}
 
 	// root dir not marked as directory
@@ -295,7 +301,7 @@ type configManager struct {
 }
 
 // WalkDir implements Manager.WalkDir. Overrides zarManager'si
-func (c *configManager) WalkDir(dir string, foldername string, root bool) {
+func (c *configManager) WalkDir(dir string, foldername string, root bool, dirLastOrder bool) {
 
 	switch c.format {
 	case "seq":
@@ -310,7 +316,7 @@ func (c *configManager) WalkDir(dir string, foldername string, root bool) {
 	// Close file once scanning is complete
 	defer c.configFile.Close()
 	scanner := bufio.NewScanner(c.configFile)
-	scanner.Split(bufio.ScanLines) 
+	scanner.Split(bufio.ScanLines)
 
 	// Read each line in the config file
 	for scanner.Scan() {
@@ -331,7 +337,7 @@ func (c *configManager) WalkDir(dir string, foldername string, root bool) {
 	}
 }
 
-// writeImage acts as the "main" method by creating and initializing the zarManager, 
+// writeImage acts as the "main" method by creating and initializing the zarManager,
 // beginning the recursive walk of the directories, and writing the metadata header
 //
 // parameter (dir)	: the root dir name
@@ -340,7 +346,8 @@ func (c *configManager) WalkDir(dir string, foldername string, root bool) {
 // parameter (config)	: whether the image file is initialized from a config file
 // parameter (configPath): the path to the config file
 // parameter (format)	: the format of the config file
-func writeImage(dir string, output string, pageAlign bool, config bool, configPath string, format string) {
+// parameter (dirLastOrder) : whether use dir-last-order when write the file
+func writeImage(dir string, output string, pageAlign bool, config bool, configPath string, format string, dirLastOrder bool) {
 	var z *zarManager
 	var c *configManager
 
@@ -363,7 +370,7 @@ func writeImage(dir string, output string, pageAlign bool, config bool, configPa
 		c.writer.Init(output)
 
 		// Begin recursive walking of directories
-		c.WalkDir(dir, dir, true)
+		c.WalkDir(dir, dir, true, dirLastOrder)
 
 		// Write the metadata to end of file
 		c.WriteHeader()
@@ -371,7 +378,7 @@ func writeImage(dir string, output string, pageAlign bool, config bool, configPa
 		z.writer.Init(output)
 
 		// Begin recursive walking of directories
-		z.WalkDir(dir, dir, true)
+		z.WalkDir(dir, dir, true, dirLastOrder)
 
 		// Write the metadata to end of file
 		z.WriteHeader()
@@ -409,7 +416,7 @@ func readImage(img string, detail bool) error {
 		fmt.Println("MMAP data:", mmap)
 	}
 
-	// header location is specifed by int64 at last 10 bits (bytes?)
+	// header location is specifed by int64 at last 10 bytes
 	headerLoc := mmap[length - 10 : length]
 	fmt.Println("header data:", headerLoc)
 
@@ -471,12 +478,16 @@ func main() {
 	config := flag.Bool("config", false, "img generated from config file")
 	configPath := flag.String("configPath", "", "path to config file for img")
 	configFormat := flag.String("configFormat", "seq", "format of config. Known: seq")
+
+	// temp flags for experiment
+	dirLastOrder := flag.Bool("dirlastorder", false, "use dir-last-order when write files")
+
 	flag.Parse()
 
 	// TODO: Create a config struct for all flags
 	if *writeMode {
 		fmt.Printf("root dir: %v\n", *dir)
-		writeImage(*dir, *output, *pageAlign, *config, *configPath, *configFormat)
+		writeImage(*dir, *output, *pageAlign, *config, *configPath, *configFormat, *dirLastOrder)
 	}
 
 	if (*readMode) {
