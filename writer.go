@@ -63,12 +63,19 @@ func (w *fileWriter) Init(fn string) error {
 }
 
 // NOTE: in the new version fileWriter.Writer return the "real" end
+// Write writes the data to the zar file. The caller can specify whether or not
+// to keep the file page aligned
+//
+// parameter (data)	: the data to be written
+// parameter (pageAlign): whether to page align the data
 func (w *fileWriter) Write(data []byte, pageAlign bool) (int64, error) {
+	// Writes to fileWriter
 	n, err := w.zarw.Write(data)
 	if err != nil {
 		return int64(n), err
 	}
 
+	// Adds padding if last page is not page aligned
 	n2 := 0
 	if pageAlign {
 		pad := (align - n % align) % pageBoundary
@@ -79,7 +86,7 @@ func (w *fileWriter) Write(data []byte, pageAlign bool) (int64, error) {
 		}
 	}
 
-	//fmt.Printf("Write data %v to file, old count: %v, length: %v\n", data, w.count, n)
+	// Updates offsets
 	realEnd := w.count + int64(n)
 	w.count += int64(n + n2)
 
@@ -88,7 +95,7 @@ func (w *fileWriter) Write(data []byte, pageAlign bool) (int64, error) {
 
 // WriteInt64 writes a int64 to the fileWriter
 //
-// parameter (v)	: the value to be written
+// parameter (v): the value to be written
 func (w *fileWriter) WriteInt64(v int64) (int64, error) {
 	buf := make([]byte, binary.MaxVarintLen64)
 	binary.PutVarint(buf, v)
@@ -104,6 +111,37 @@ func (w *fileWriter) Close() error {
 	fmt.Println("Written Bytes: ", w.count)
 	w.zarw.Flush()
 	return w.f.Close()
+}
+
+// Manager is an interface for creating the image file.
+// This interface allows for multiple implementations of its creation.
+type Manager interface {
+	// WalkDir recursively traverses each directory below the root director and processes files
+	// by creating metadata.
+	//
+	// Parameter (dir) 		: name of path relative to root dir
+	// parameter (foldername) 	: name of current folder
+	// parameter (root)		: whether or not dir is the root dir
+	WalkDir(dir string, foldername string, root bool)
+
+	// IncludeFolderBegin initializes metadata for the beginning of a file
+	//
+	// parameter (name)	: name of the file beginning
+	IncludeFolderBegin(name string)
+
+	// IncludeFolderEnd initializes metadata for the end of a file
+	IncludeFolderEnd()
+
+	// IncludeFile reads the given file, adds it to the file, and creates the metadata.
+	//
+	// parameter (fn)	: name of the file to be read
+	// paramter (basedir)	: name of the current directory relative to root
+	// return		: new offset into the image file
+	IncludeFile(fn string, basedir string) (int64, error)
+
+	// WriterHeader writes the metadata for the imagefile to the end of the image file.
+	// The location of the beginning of the header is written at the very end as an int64
+	WriteHeader() error
 }
 
 // zarManager is the main driver of creating the image file. It writes the data and stores metadata.
@@ -130,13 +168,8 @@ type fileMetadata struct {
 	Name string
 }
 
-// WalkDir recursively traverses each directory below the root director and processes files
-// by creating metadata.
-//
-// Parameter (dir) 		: name of path relative to root dir
-// parameter (foldername) 	: name of current folder
-// parameter (root)		: whether or not dir is the root dir
 // TODO: Change this to breadth first search to see difference (Change to an interface to implement diff types)
+// WalkDir implemented Manager.WalkDir
 func (z *zarManager) WalkDir(dir string, foldername string, root bool) {
 	// root dir not marked as directory
 	if !root {
@@ -169,9 +202,7 @@ func (z *zarManager) WalkDir(dir string, foldername string, root bool) {
 }
 
 // TODO: Change to interface for metadata to have diff types of metadata
-// IncludeFolderBegin initializes metadata for the beginning of a file
-//
-// parameter (name)	: name of the file beginning
+// IncludeFolderBegin implements Manager.IncludeFolderBegin
 func (z *zarManager) IncludeFolderBegin(name string) {
 	h := &fileMetadata{
 			Begin	: -1,
@@ -183,7 +214,7 @@ func (z *zarManager) IncludeFolderBegin(name string) {
 	z.metadata = append(z.metadata, *h)
 }
 
-// IncludeFolderEnd initializes metadata for the end of a file
+// IncludeFolderEnd implements IncludeFolderEnd
 func (z *zarManager) IncludeFolderEnd() {
 	h := &fileMetadata{
 			Begin	: -1,
@@ -195,11 +226,7 @@ func (z *zarManager) IncludeFolderEnd() {
 	z.metadata = append(z.metadata, *h)
 }
 
-// IncludeFile reads the given file, adds it to the file, and creates the metadata.
-//
-// parameter (fn)	: name of the file to be read
-// paramter (basedir)	: name of the current directory relative to root
-// return		: new offset into the image file
+// IncludeFile implements Manager.IncludeFile
 func (z *zarManager) IncludeFile(fn string, basedir string) (int64, error) {
 	content, err := ioutil.ReadFile(path.Join(basedir, fn))
 	if err != nil {
@@ -227,8 +254,7 @@ func (z *zarManager) IncludeFile(fn string, basedir string) (int64, error) {
 }
 
 // TODO: Is gob the best choice here?
-// WriterHeader writes the metadata for the imagefile to the end of the image file.
-// The location of the beginning of the header is written at the very end as an int64
+// WriteHeader implements Manager.WriteHeader
 func (z *zarManager) WriteHeader() error {
 	headerLoc := z.writer.count	// Offset for metadata in image file
 	fmt.Printf("header location: %v bytes\n", headerLoc)
