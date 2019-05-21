@@ -168,6 +168,7 @@ type fileMetadata struct {
 	Name string
 }
 
+
 // TODO: Change this to breadth first search to see difference (Change to an interface to implement diff types)
 // WalkDir implemented Manager.WalkDir
 func (z *zarManager) WalkDir(dir string, foldername string, root bool) {
@@ -280,21 +281,70 @@ func (z *zarManager) WriteHeader() error {
 	return nil
 }
 
+// configManager is a struct for writing image files from a configuration file. The configuration file
+// will specify which files to read (relative to root dir) and in what order to put them in img file.
+type configManager struct {
+	// Inherits zarManager's methods
+	*zarManager
+
+	// Format of the input file (e.g. YAML, csv, ..)
+	format string
+
+	// The configuration file with the structure of the img file specified in the format in the format field
+	configFile *os.File
+}
+
+// WalkDir implements Manager.WalkDir. Overrides zarManager's
+func (c *configManager) WalkDir(dir string, foldername string, root bool) {
+	// TODO
+
+	// Go line by line through the config file
+	// 	1. If file, call IncludeFile
+	//	2. If dir, recursively call WalkDir and call being and end metadata folder 
+}
+
 // writeImage acts as the "main" method by creating and initializing the zarManager, 
 // beginning the recursive walk of the directories, and writing the metadata header
 //
 // parameter (dir)	: the root dir name
 // parameter (output)	: the name of the image file
 // parameter (pageAlign): whether the files in the image will be page aligned
-func writeImage(dir string, output string, pageAlign bool) {
-	z := &zarManager{pageAlign:pageAlign}
-	z.writer.Init(output)
+func writeImage(dir string, output string, pageAlign bool, config bool, configPath string, format string) {
+	var z *zarManager
+	var c *configManager
 
-	// Begin recursive walking of directories
-	z.WalkDir(dir, dir, true)
+	z = &zarManager{pageAlign:pageAlign}
 
-	// Write the metadata to end of file
-	z.WriteHeader()
+	// Create the manager
+	// TODO: Make this not redundant code
+	if config {
+		// Open the config file
+		f, err := os.Open(configPath)
+		if err != nil {
+			log.Fatalf("can't open config file %v, err: %v", configPath, err)
+		}
+
+		c = &configManager{
+			zarManager	: z,
+			format		: format,
+			configFile	: f,
+		}
+		c.writer.Init(output)
+
+		// Begin recursive walking of directories
+		c.WalkDir(dir, dir, true)
+
+		// Write the metadata to end of file
+		c.WriteHeader()
+	} else {
+		z.writer.Init(output)
+
+		// Begin recursive walking of directories
+		z.WalkDir(dir, dir, true)
+
+		// Write the metadata to end of file
+		z.WriteHeader()
+	}
 }
 
 // TODO: Break up into smaller methods
@@ -380,22 +430,26 @@ func main() {
 
 	// TODO: Add flag for info logging
 	// Handle flags
-	dirPtr := flag.String("dir", "./", "select the root dir to generate image")
-	imgPtr := flag.String("img", "test.img", "select the image to read")
-	outputPtr := flag.String("o", "test.img", "output img name")
-	writeModePtr := flag.Bool("w", false, "generate image mode")
-	readModePtr := flag.Bool("r", false, "read image mode")
-	pageAlignPtr := flag.Bool("pagealign", false, "align the page")
-	detailModePtr := flag.Bool("detail", false, "show original context when read")
+	dir := flag.String("dir", "./", "select the root dir to generate image")
+	img := flag.String("img", "test.img", "select the image to read")
+	output := flag.String("o", "test.img", "output img name")
+	writeMode := flag.Bool("w", false, "generate image mode")
+	readMode := flag.Bool("r", false, "read image mode")
+	pageAlign := flag.Bool("pagealign", false, "align the page")
+	detailMode := flag.Bool("detail", false, "show original context when read")
+	config := flag.Bool("config", false, "img generated from config file")
+	configPath := flag.String("configPath", "", "path to config file for img")
+	configFormat := flag.String("configFormat", "yaml", "format of config. Known: yaml")
 	flag.Parse()
 
-	if *writeModePtr {
-		fmt.Printf("root dir: %v\n", *dirPtr)
-		writeImage(*dirPtr, *outputPtr, *pageAlignPtr)
+	// TODO: Create a config struct for all flags
+	if *writeMode {
+		fmt.Printf("root dir: %v\n", *dir)
+		writeImage(*dir, *output, *pageAlign, *config, *configPath, *configFormat)
 	}
 
-	if (*readModePtr) {
-		fmt.Printf("img selected: %v\n", *imgPtr)
-		readImage(*imgPtr, *detailModePtr)
+	if (*readMode) {
+		fmt.Printf("img selected: %v\n", *img)
+		readImage(*img, *detailMode)
 	}
 }
