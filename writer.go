@@ -29,7 +29,7 @@ const (
 // fileWriter struct writes to a file
 type fileWriter struct {
 	// zarw is used as the writer to the file f
-	zarw *bufio.Write
+	zarw *bufio.Writer
 
 	// Count is the cumulative bytes written to the file f 
 	count int64
@@ -78,7 +78,7 @@ func (w *fileWriter) Write(data []byte, pageAlign bool) (int64, error) {
 	// Adds padding if last page is not page aligned
 	n2 := 0
 	if pageAlign {
-		pad := (align - n % align) % pageBoundary
+		pad := (pageBoundary - n % pageBoundary) % pageBoundary
 		fmt.Printf("current write size: %v, padding size: %v\n", n, pad)
 		if pad > 0 {
 			s := make([]byte, pad)
