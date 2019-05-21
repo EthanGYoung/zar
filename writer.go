@@ -183,6 +183,8 @@ func (z *zarManager) WalkDir(dir string, foldername string, root bool) {
 		log.Fatalf("walk dir unknown err when processing dir %v", dir)
 	}
 
+	var dirs []string
+
 	// Process each file in the directory
 	for _, file := range files {
 		name := file.Name()
@@ -190,9 +192,14 @@ func (z *zarManager) WalkDir(dir string, foldername string, root bool) {
 			fmt.Printf("including file: %v\n", name)
 			z.IncludeFile(name, dir)
 		} else {
-			// Depth first search recursively on each directory
-			z.WalkDir(path.Join(dir, name), name, false)
+			dirs = append(dirs, name)
 		}
+	}
+
+	// Recursively search each directory (DFS)
+	// After file processing to improve spatial locatlity for files
+	for _, subDir := range dirs {
+		z.WalkDir(path.Join(dir, subDir), subDir, false)
 	}
 
 	// root dir not marked as directory
