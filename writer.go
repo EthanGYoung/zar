@@ -12,9 +12,16 @@ import (
 	"io/ioutil"
 	"log"
 	"path"
-	"path/filepath"
 	"os"
 	"syscall"
+)
+
+type fileType int
+
+const(
+	RegularFile fileType = iota
+	Directory
+	Symlink
 )
 
 type fileWriter struct {
@@ -27,6 +34,8 @@ type fileMetadata struct {
 	Begin int64
 	End int64
 	Name string
+	Link string
+	Type fileType
 }
 
 type zarManager struct {
@@ -79,12 +88,11 @@ func (w *fileWriter) WriteInt64(v int64) (int64, error) {
 	buf := make([]byte, binary.MaxVarintLen64)
 	binary.PutVarint(buf, v)
 	n, err := w.Write(buf, false)
-	w.count += int64(n)
 	return n, err
 }
 
 func (w *fileWriter) Close() error {
-	fmt.Println("Written Bytes: ", w.count)
+	fmt.Println("Written Bytes: ", w.count, "+ metadata size")
 	w.zarw.Flush()
 	return w.f.Close()
 }
@@ -106,6 +114,7 @@ func (z *zarManager) IncludeFile(fn string, basedir string) (int64, error) {
 			Begin : oldCounter,
 			End	  : real_end,
 			Name  : fn,
+			Type	: RegularFile,
 	}
 	z.metadata = append(z.metadata, *h)
 	return real_end, err
@@ -116,6 +125,18 @@ func (z *zarManager) IncludeFolderBegin(name string) {
 			Begin : -1,
 			End	  : -1,
 			Name  : name,
+			Type	: Directory,
+	}
+	z.metadata = append(z.metadata, *h)
+}
+
+func (z *zarManager) IncludeSymlink(name string, link string) {
+	h := &fileMetadata{
+			Begin : -1,
+			End	  : -1,
+			Name  : name,
+			Link	: link,
+			Type	: Symlink,
 	}
 	z.metadata = append(z.metadata, *h)
 }
@@ -125,6 +146,7 @@ func (z *zarManager) IncludeFolderEnd() {
 			Begin : -1,
 			End	  : -1,
 			Name  : "..",
+			Type	: Directory,
 	}
 	z.metadata = append(z.metadata, *h)
 }
@@ -133,12 +155,6 @@ func (z *zarManager) WriteHeader() error {
 	headerLoc := z.writer.count
 	mEnc := gob.NewEncoder(z.writer.zarw)
 	fmt.Println("current metadata:", z.metadata)
-	//**test**
-	var test bytes.Buffer
-	mEncTest := gob.NewEncoder(&test)
-	mEncTest.Encode(z.metadata)
-	fmt.Println("test gob encode result:", test)
-	//**test**
 	mEnc.Encode(z.metadata)
 	fmt.Printf("header location: %v bytes\n", headerLoc)
 	z.writer.WriteInt64(int64(headerLoc))
@@ -170,28 +186,21 @@ func walkDir(dir string, foldername string, z *zarManager, root bool) {
 		name := file.Name()
 		symlink := file.Mode() & os.ModeSymlink != 0
 		file_path := path.Join(dir, name)
-		
+
 		if symlink {
 			fmt.Printf("%v is symlink.", file_path)
 			real_dest, err := os.Readlink(file_path)
-			if !filepath.IsAbs(real_dest) {
-				real_dest = path.Join(dir, real_dest)
-			}
-			real_dest_file, err := os.Open(real_dest)
 			if err != nil {
-				log.Fatalf("error. Can't open symlink file. %v", real_dest)
+				log.Fatalf("error. Can't read symlink file. %v", real_dest)
 			}
-			file, err = real_dest_file.Stat()
-			if err != nil {
-				log.Fatalf("error. Can't get symlink file stat. %v", real_dest)
-			}
-		}
-	    
-		if !file.IsDir() {
-			fmt.Printf("including file: %v\n", name)
-			z.IncludeFile(name, dir)
+			z.IncludeSymlink(name, real_dest)
 		} else {
-			walkDir(file_path, name, z, false)
+			if !file.IsDir() {
+				fmt.Printf("including file: %v\n", name)
+				z.IncludeFile(name, dir)
+			} else {
+				walkDir(file_path, name, z, false)
+			}
 		}
 	}
 	if !root {
@@ -229,6 +238,7 @@ func readImage(img string, detail bool) error {
 
 	header := mmap[int(n) : length - 10]
 	fmt.Println("metadata data:", header)
+	fmt.Println("metadata size:", length - 10 - int(n), "bytes")
 	metadataReader := bytes.NewReader(header)
 	var metadata []fileMetadata
 	dec := gob.NewDecoder(metadataReader)
@@ -238,9 +248,24 @@ func readImage(img string, detail bool) error {
 			return err
 	}
 	fmt.Println(metadata)
+	level := 0
+	space := 2
 	for _, v := range metadata {
+		for i := 0; i < space * level; i++ {
+			fmt.Printf(" ")
+		}
 		if v.Begin == -1 {
-			fmt.Printf("enter folder: %v\n", v.Name)
+			if v.Type == Directory {
+				if v.Name != ".." {
+					fmt.Printf("[folder] %v\n", v.Name)
+					level += 1
+				} else {
+					fmt.Printf("[flag] leave folder\n")
+					level -= 1
+				}
+			} else {
+				fmt.Printf("[symlink] %v -> %v\n", v.Name, v.Link)
+			}
 		} else {
 			var fileString string
 			if detail {
@@ -249,7 +274,7 @@ func readImage(img string, detail bool) error {
 			} else {
 				fileString = "ignored"
 			}
-			fmt.Printf("file: %v, data: %v\n", v.Name, fileString)
+			fmt.Printf("[regular file] %v (data: %v)\n", v.Name, fileString)
 		}
 	}
 	return nil
