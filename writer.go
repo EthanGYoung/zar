@@ -282,7 +282,7 @@ func readImage(img string, detail bool) error {
 
 func main() {
 
-	fmt.Println("zar image generator version 1")
+	fmt.Println("zar image generator version 1.1")
 	dirPtr := flag.String("dir", "./", "select the dir to generate image")
 	imgPtr := flag.String("img", "test.img", "select the image to read")
 	outputPtr := flag.String("o", "test.img", "output img name")
