@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"encoding/binary"
 	"encoding/gob"
-	//"io"
 	"io/ioutil"
 	"log"
 	"path"
 	"os"
+	"strings"
 	"syscall"
 )
 
@@ -294,13 +294,41 @@ type configManager struct {
 	configFile *os.File
 }
 
-// WalkDir implements Manager.WalkDir. Overrides zarManager's
+// WalkDir implements Manager.WalkDir. Overrides zarManager'si
 func (c *configManager) WalkDir(dir string, foldername string, root bool) {
-	// TODO
 
-	// Go line by line through the config file
-	// 	1. If file, call IncludeFile
-	//	2. If dir, recursively call WalkDir and call being and end metadata folder 
+	switch c.format {
+	case "seq":
+	// seq format is as follows
+	// <File (f) or Start Dir (sd) or End Dir (ed) > | < path excluding file name > | < name > \n
+	// TODO: Create a file reader struct to allow for generic reading of different formats.
+	// TODO: For now, prototype will always assume seq
+	default:
+		log.Fatalf("Config format not recognized")
+	}
+
+	// Close file once scanning is complete
+	defer c.configFile.Close()
+	scanner := bufio.NewScanner(c.configFile)
+	scanner.Split(bufio.ScanLines) 
+
+	// Read each line in the config file
+	for scanner.Scan() {
+		// Parse the line TODO: Save path along way so config does not need path and name separate
+		s := strings.Split(scanner.Text(), "|")
+		action, path, name := s[0], s[1], s[2]
+
+		switch action {
+		case "f":
+			c.IncludeFile(name, path)
+		case "sd":
+			c.IncludeFolderBegin(name)
+		case "ed":
+			c.IncludeFolderEnd()
+		default:
+			log.Fatalf("Config action not recognized")
+		}
+	}
 }
 
 // writeImage acts as the "main" method by creating and initializing the zarManager, 
@@ -309,6 +337,9 @@ func (c *configManager) WalkDir(dir string, foldername string, root bool) {
 // parameter (dir)	: the root dir name
 // parameter (output)	: the name of the image file
 // parameter (pageAlign): whether the files in the image will be page aligned
+// parameter (config)	: whether the image file is initialized from a config file
+// parameter (configPath): the path to the config file
+// parameter (format)	: the format of the config file
 func writeImage(dir string, output string, pageAlign bool, config bool, configPath string, format string) {
 	var z *zarManager
 	var c *configManager
@@ -439,7 +470,7 @@ func main() {
 	detailMode := flag.Bool("detail", false, "show original context when read")
 	config := flag.Bool("config", false, "img generated from config file")
 	configPath := flag.String("configPath", "", "path to config file for img")
-	configFormat := flag.String("configFormat", "yaml", "format of config. Known: yaml")
+	configFormat := flag.String("configFormat", "seq", "format of config. Known: seq")
 	flag.Parse()
 
 	// TODO: Create a config struct for all flags
