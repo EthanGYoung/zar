@@ -20,7 +20,15 @@ const (
 	pageBoundary = 4096	// The boundary that needs to be upheld for page alignment
 )
 
-// TODO 
+type fileType int
+
+const(
+ 	RegularFile fileType = iota
+ 	Directory
+ 	Symlink
+ )
+
+// TODO
 // Add new struct for walking directories
 // Can have one that will do a breadth first search based on current implementation
 // Can have another that will walk based on a yaml file uploaded
@@ -31,7 +39,7 @@ type fileWriter struct {
 	// zarw is used as the writer to the file f
 	zarw *bufio.Writer
 
-	// Count is the cumulative bytes written to the file f 
+	// Count is the cumulative bytes written to the file f
 	count int64
 
 	// f is the file object that the writer will write to
@@ -100,15 +108,12 @@ func (w *fileWriter) WriteInt64(v int64) (int64, error) {
 	buf := make([]byte, binary.MaxVarintLen64)
 	binary.PutVarint(buf, v)
 	n, err := w.Write(buf, false)
-
-	// Extends the file offset
-	w.count += int64(n)
 	return n, err
 }
 
 // Close closes the filewriter by flushing any buffer
 func (w *fileWriter) Close() error {
-	fmt.Println("Written Bytes: ", w.count)
+	fmt.Println("Written Bytes: ", w.count, "+ metadata size")
 	w.zarw.Flush()
 	return w.f.Close()
 }
@@ -166,6 +171,12 @@ type fileMetadata struct {
 
 	// Name indicates the name of a specific file in the file
 	Name string
+
+	// If the file is a symlink, this entry is used for link info
+	Link string
+
+	// Type indicated the type of a specific file (dir, symlink or regular file)
+ 	Type fileType
 }
 
 
@@ -189,11 +200,23 @@ func (z *zarManager) WalkDir(dir string, foldername string, root bool) {
 	// Process each file in the directory
 	for _, file := range files {
 		name := file.Name()
-		if !file.IsDir() {
-			fmt.Printf("including file: %v\n", name)
-			z.IncludeFile(name, dir)
+		symlink := file.Mode() & os.ModeSymlink != 0
+		file_path := path.Join(dir, name)
+
+		if symlink {
+			fmt.Printf("%v is symlink.", file_path)
+			real_dest, err := os.Readlink(file_path)
+			if err != nil {
+				log.Fatalf("error. Can't read symlink file. %v", real_dest)
+			}
+			z.IncludeSymlink(name, real_dest)
 		} else {
-			dirs = append(dirs, name)
+			if !file.IsDir() {
+				fmt.Printf("including file: %v\n", name)
+				z.IncludeFile(name, dir)
+				} else {
+						dirs = append(dirs, name)
+			}
 		}
 	}
 
@@ -216,6 +239,7 @@ func (z *zarManager) IncludeFolderBegin(name string) {
 			Begin	: -1,
 			End	: -1,
 			Name	: name,
+			Type	: Directory,
 	}
 
 	// Add to the image's metadata at end
@@ -228,9 +252,21 @@ func (z *zarManager) IncludeFolderEnd() {
 			Begin	: -1,
 			End	: -1,
 			Name	: "..",
+			Type	: Directory,
 	}
 
 	// Add to the image's metadata at end
+	z.metadata = append(z.metadata, *h)
+}
+
+func (z *zarManager) IncludeSymlink(name string, link string) {
+ 	h := &fileMetadata{
+ 			Begin : -1,
+ 			End	  : -1,
+ 			Name  : name,
+ 			Link	: link,
+ 			Type	: Symlink,
+ 	}
 	z.metadata = append(z.metadata, *h)
 }
 
@@ -255,6 +291,7 @@ func (z *zarManager) IncludeFile(fn string, basedir string) (int64, error) {
 			Begin	: oldCounter,
 			End	: real_end,
 			Name	: fn,
+			Type	: RegularFile,
 	}
 	z.metadata = append(z.metadata, *h)
 
@@ -310,7 +347,7 @@ func (c *configManager) WalkDir(dir string, foldername string, root bool) {
 	// Close file once scanning is complete
 	defer c.configFile.Close()
 	scanner := bufio.NewScanner(c.configFile)
-	scanner.Split(bufio.ScanLines) 
+	scanner.Split(bufio.ScanLines)
 
 	// Read each line in the config file
 	for scanner.Scan() {
@@ -331,7 +368,7 @@ func (c *configManager) WalkDir(dir string, foldername string, root bool) {
 	}
 }
 
-// writeImage acts as the "main" method by creating and initializing the zarManager, 
+// writeImage acts as the "main" method by creating and initializing the zarManager,
 // beginning the recursive walk of the directories, and writing the metadata header
 //
 // parameter (dir)	: the root dir name
@@ -435,21 +472,35 @@ func readImage(img string, detail bool) error {
 	}
 	fmt.Println("metadata data decoded:", metadata)
 
+	level := 0
+	space := 2
+
 	// Print the structure (and data) of the image file
 	for _, v := range metadata {
+		for i := 0; i < space * level; i++ {
+			fmt.Printf(" ")
+		}
 		if v.Begin == -1 {
-			fmt.Printf("enter folder: %v\n", v.Name)
+			if v.Type == Directory {
+				if v.Name != ".." {
+					fmt.Printf("[folder] %v\n", v.Name)
+					level += 1
+				} else {
+					fmt.Printf("[flag] leave folder\n")
+					level -= 1
+				}
+			} else {
+				fmt.Printf("[symlink] %v -> %v\n", v.Name, v.Link)
+			}
 		} else {
 			var fileString string
-
-			// the detail flag will print out file data, too
 			if detail {
 				fileBytes := mmap[v.Begin : v.End]
 				fileString = string(fileBytes)
 			} else {
 				fileString = "ignored"
 			}
-			fmt.Printf("file: %v, data: %v\n", v.Name, fileString)
+			fmt.Printf("[regular file] %v (data: %v)\n", v.Name, fileString)
 		}
 	}
 	return nil
