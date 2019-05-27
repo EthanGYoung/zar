@@ -9,7 +9,6 @@ import (
 	"log"
 	"os"
 	"path"
-  "time"
 
 	"fileio/writer"
 )
@@ -20,8 +19,8 @@ type fileType int
 const (
 	// Represent the possible file types for files
 	RegularFile fileType = iota
-        Directory
-        Symlink
+    Directory
+    Symlink
 )
 
 // Manager is an interface for creating the image file.
@@ -33,12 +32,12 @@ type Manager interface {
         // Parameter (dir)              : name of path relative to root dir
         // parameter (foldername)       : name of current folder
         // parameter (root)             : whether or not dir is the root dir
-        WalkDir(dir string, foldername string, mod_time time.Time, root bool)
+        WalkDir(dir string, foldername string, mod_time int64, root bool)
 
         // IncludeFolderBegin initializes Metadata for the beginning of a file
         //
         // parameter (name)     : name of the file beginning
-        IncludeFolderBegin(name string, mod_time time.Time)
+        IncludeFolderBegin(name string, mod_time int64)
 
         // IncludeFolderEnd initializes Metadata for the end of a file
         IncludeFolderEnd()
@@ -48,7 +47,7 @@ type Manager interface {
         // parameter (fn)       : name of the file to be read
         // paramter (basedir)   : name of the current directory relative to root
         // return               : new offset into the image file
-        IncludeFile(fn string, basedir string, mod_time time.Time) (int64, error)
+        IncludeFile(fn string, basedir string, mod_time int64) (int64, error)
 
         // WriterHeader writes the Metadata for the imagefile to the end of the image file.
         // The location of the beginning of the header is written at the very end as an int64
@@ -69,8 +68,8 @@ type FileMetadata struct {
         // If the file is a symlink, this entry is used for link info
         Link string
 
-				// File modification time
-        ModTime time.Time
+		// File modification time
+        ModTime int64 
 
         // Type indicated the type of a specific file (dir, symlink or regular file)
         Type fileType
@@ -90,11 +89,11 @@ type ZarManager struct {
 
 type DirInfo struct {
         Name string
-				ModTime time.Time
+		ModTime int64 
 }
 
 // WalkDir implemented Manager.WalkDir
-func (z *ZarManager) WalkDir(dir string, foldername string, mod_time time.Time, root bool) {
+func (z *ZarManager) WalkDir(dir string, foldername string, mod_time int64, root bool) {
         // root dir not marked as directory
         if !root {
                 fmt.Printf("including folder: %v, name: %v\n", dir, foldername)
@@ -114,7 +113,7 @@ func (z *ZarManager) WalkDir(dir string, foldername string, mod_time time.Time, 
                 name := file.Name()
                 symlink := file.Mode() & os.ModeSymlink != 0
                 file_path := path.Join(dir, name)
-                mod_time := file.ModTime()
+                mod_time := file.ModTime().UnixNano()
 
                 if symlink {
                         // Symbolic link is an indirection, thus read and include
@@ -149,13 +148,13 @@ func (z *ZarManager) WalkDir(dir string, foldername string, mod_time time.Time, 
 
 // TODO: Change to interface for Metadata to have diff types of Metadata
 // IncludeFolderBegin implements Manager.IncludeFolderBegin
-func (z *ZarManager) IncludeFolderBegin(name string, mod_time time.Time) {
+func (z *ZarManager) IncludeFolderBegin(name string, mod_time int64) {
         h := &FileMetadata{
                         Begin   : -1,
                         End     : -1,
                         Name    : name,
                         Type    : Directory,
-												ModTime	: mod_time,
+						ModTime	: mod_time,
         }
 
         // Add to the image's Metadata at end
@@ -183,20 +182,20 @@ func (z *ZarManager) IncludeFolderEnd() {
 // parameter (link)     : the actual path to the desired file
 // parameter (mod_time) : the modification time fo the file
 
-func (z *ZarManager) IncludeSymlink(name string, link string, mod_time time.Time) {
+func (z *ZarManager) IncludeSymlink(name string, link string, mod_time int64) {
         h := &FileMetadata{
                         Begin   : -1,
                         End     : -1,
                         Name    : name,
                         Link    : link,
                         Type    : Symlink,
-												ModTime : mod_time,
+						ModTime : mod_time,
         }
         z.Metadata = append(z.Metadata, *h)
 }
 
 // IncludeFile implements Manager.IncludeFile
-func (z *ZarManager) IncludeFile(fn string, basedir string, mod_time time.Time) (int64, error) {
+func (z *ZarManager) IncludeFile(fn string, basedir string, mod_time int64) (int64, error) {
         content, err := ioutil.ReadFile(path.Join(basedir, fn))
         if err != nil {
                 log.Fatalf("can't include file %v, err: %v", fn, err)
@@ -217,7 +216,7 @@ func (z *ZarManager) IncludeFile(fn string, basedir string, mod_time time.Time) 
                         End     : real_end,
                         Name    : fn,
                         Type    : RegularFile,
-												ModTime : mod_time,
+						ModTime : mod_time,
         }
         z.Metadata = append(z.Metadata, *h)
 

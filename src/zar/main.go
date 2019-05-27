@@ -9,7 +9,6 @@ import (
 	"log"
 	"os"
 	"syscall"
-	"time"
 
 	// TODO: Change paths to be remotely imported from github
 	"manager"
@@ -55,7 +54,7 @@ func writeImage(dir string, output string, pageAlign bool, config bool, configPa
 		z.Writer.Init(output)
 
 		// Begin recursive walking of directories
-		z.WalkDir(dir, dir, time.Time{}, true)
+		z.WalkDir(dir, dir, 0, true)
 
 		// Write the metadata to end of file
 		z.WriteHeader()

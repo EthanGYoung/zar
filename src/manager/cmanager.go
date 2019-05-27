@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"strings"
-	"time"
 )
 
 // CManager ("configmanager") is a struct for writing image files from a configuration file
@@ -48,9 +47,10 @@ func (c *CManager) WalkDir(dir string, foldername string, root bool) {
 
                 switch action {
                 case "f":
-                        c.IncludeFile(name, path, time.Time{})
+                        c.IncludeFile(name, path, 0)
+                        // TODO: change 0 to valid timestamp
                 case "sd":
-                        c.IncludeFolderBegin(name, time.Time{})
+                        c.IncludeFolderBegin(name, 0)
                 case "ed":
                         c.IncludeFolderEnd()
                 default:
