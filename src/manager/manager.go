@@ -18,7 +18,7 @@ type fileType int
 
 const (
 	// Represent the possible file types for files
-	RegularFile fileType = iota
+    RegularFile fileType = iota
     Directory
     Symlink
 )
@@ -89,7 +89,7 @@ type ZarManager struct {
 
 type DirInfo struct {
         Name string
-		ModTime int64 
+        ModTime int64 
 }
 
 // WalkDir implemented Manager.WalkDir
@@ -128,8 +128,8 @@ func (z *ZarManager) WalkDir(dir string, foldername string, mod_time int64, root
                         if !file.IsDir() {
                                 fmt.Printf("including file: %v\n", name)
                                 z.IncludeFile(name, dir, mod_time)
-                                } else {
-                                        dirs = append(dirs, &DirInfo{name, mod_time})
+                        } else {
+                                dirs = append(dirs, &DirInfo{name, mod_time})
                         }
                 }
         }
@@ -150,11 +150,11 @@ func (z *ZarManager) WalkDir(dir string, foldername string, mod_time int64, root
 // IncludeFolderBegin implements Manager.IncludeFolderBegin
 func (z *ZarManager) IncludeFolderBegin(name string, mod_time int64) {
         h := &FileMetadata{
-                        Begin   : -1,
-                        End     : -1,
-                        Name    : name,
-                        Type    : Directory,
-						ModTime	: mod_time,
+                    Begin   : -1,
+                    End     : -1,
+                    Name    : name,
+                    Type    : Directory,
+                    ModTime	: mod_time,
         }
 
         // Add to the image's Metadata at end
@@ -189,7 +189,7 @@ func (z *ZarManager) IncludeSymlink(name string, link string, mod_time int64) {
                         Name    : name,
                         Link    : link,
                         Type    : Symlink,
-						ModTime : mod_time,
+                        ModTime : mod_time,
         }
         z.Metadata = append(z.Metadata, *h)
 }
@@ -216,7 +216,7 @@ func (z *ZarManager) IncludeFile(fn string, basedir string, mod_time int64) (int
                         End     : real_end,
                         Name    : fn,
                         Type    : RegularFile,
-						ModTime : mod_time,
+                        ModTime : mod_time,
         }
         z.Metadata = append(z.Metadata, *h)
 
