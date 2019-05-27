@@ -5,10 +5,11 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 )
 
 // CManager ("configmanager") is a struct for writing image files from a configuration file
-// The configuration file will specify which files to read (relative to root dir) 
+// The configuration file will specify which files to read (relative to root dir)
 // and in what order to put them in img file.
 type CManager struct {
         // Inherits manager's methods
@@ -47,9 +48,9 @@ func (c *CManager) WalkDir(dir string, foldername string, root bool) {
 
                 switch action {
                 case "f":
-                        c.IncludeFile(name, path)
+                        c.IncludeFile(name, path, time.Time{})
                 case "sd":
-                        c.IncludeFolderBegin(name)
+                        c.IncludeFolderBegin(name, time.Time{})
                 case "ed":
                         c.IncludeFolderEnd()
                 default:
@@ -57,4 +58,3 @@ func (c *CManager) WalkDir(dir string, foldername string, root bool) {
                 }
         }
 }
-
