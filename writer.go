@@ -16,16 +16,13 @@ import (
 	"syscall"
 )
 
-const (
-	pageBoundary = 4096	// The boundary that needs to be upheld for page alignment
-)
-
 type fileType int
 
 const(
- 	RegularFile fileType = iota
- 	Directory
- 	Symlink
+	pageBoundary = 4096	// The boundary that needs to be upheld for page alignment
+	RegularFile fileType = iota
+	Directory
+	Symlink
  )
 
 // TODO
@@ -176,11 +173,10 @@ type fileMetadata struct {
 	Link string
 
 	// Type indicated the type of a specific file (dir, symlink or regular file)
- 	Type fileType
+	Type fileType
 }
 
 
-// TODO: Change this to breadth first search to see difference (Change to an interface to implement diff types)
 // WalkDir implemented Manager.WalkDir
 func (z *zarManager) WalkDir(dir string, foldername string, root bool) {
 	// root dir not marked as directory
@@ -204,11 +200,13 @@ func (z *zarManager) WalkDir(dir string, foldername string, root bool) {
 		file_path := path.Join(dir, name)
 
 		if symlink {
+			// Symbolic link is an indirection, thus read and include
 			fmt.Printf("%v is symlink.", file_path)
 			real_dest, err := os.Readlink(file_path)
 			if err != nil {
 				log.Fatalf("error. Can't read symlink file. %v", real_dest)
 			}
+			// TODO: Can we replace with file redirecting to here? Could eliminate symbolic links
 			z.IncludeSymlink(name, real_dest)
 		} else {
 			if !file.IsDir() {
@@ -259,14 +257,20 @@ func (z *zarManager) IncludeFolderEnd() {
 	z.metadata = append(z.metadata, *h)
 }
 
+// IncludeSymlink adds metadata to the image file for a symbolic link. This
+// allows for paths to be indirections. Not included in interface because
+// not necessarily fundamental for correctness.
+//
+// parameter (name)	: name of file
+// parameter (link)	: the actual path to the desired file
 func (z *zarManager) IncludeSymlink(name string, link string) {
- 	h := &fileMetadata{
- 			Begin : -1,
- 			End	  : -1,
- 			Name  : name,
- 			Link	: link,
- 			Type	: Symlink,
- 	}
+	h := &fileMetadata{
+			Begin	: -1,
+			End	: -1,
+			Name	: name,
+			Link	: link,
+			Type	: Symlink,
+	}
 	z.metadata = append(z.metadata, *h)
 }
 
