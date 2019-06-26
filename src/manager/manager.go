@@ -3,24 +3,25 @@ package manager
 
 
 import (
-	"encoding/gob"
-	"fmt"
-	"io/ioutil"
-	"log"
-	"os"
-	"path"
+  "encoding/gob"
+  "fmt"
+  "io/ioutil"
+  "log"
+  "os"
+  "path"
 
-	"fileio/writer"
+  "fileio/writer"
 )
 
 // fileType is an integer representating the file type (RegularFile, Directory, Symlink)
 type fileType int
 
 const (
-	// Represent the possible file types for files
+  // Represent the possible file types for files
     RegularFile fileType = iota
     Directory
     Symlink
+    WhiteoutFile
 )
 
 // Manager is an interface for creating the image file.
@@ -49,6 +50,8 @@ type Manager interface {
         // return               : new offset into the image file
         IncludeFile(fn string, basedir string, mod_time int64) (int64, error)
 
+				IncludeWhiteoutFile(fn string, mod_time int64)
+
         // WriterHeader writes the Metadata for the imagefile to the end of the image file.
         // The location of the beginning of the header is written at the very end as an int64
         WriteHeader() error
@@ -68,8 +71,8 @@ type FileMetadata struct {
         // If the file is a symlink, this entry is used for link info
         Link string
 
-		// File modification time
-        ModTime int64 
+    // File modification time
+        ModTime int64
 
         // Type indicated the type of a specific file (dir, symlink or regular file)
         Type fileType
@@ -89,7 +92,7 @@ type ZarManager struct {
 
 type DirInfo struct {
         Name string
-        ModTime int64 
+        ModTime int64
 }
 
 // WalkDir implemented Manager.WalkDir
@@ -112,10 +115,17 @@ func (z *ZarManager) WalkDir(dir string, foldername string, mod_time int64, root
         for _, file := range files {
                 name := file.Name()
                 symlink := file.Mode() & os.ModeSymlink != 0
+                device := file.Mode() & os.ModeDevice != 0
+                size := file.Size()
                 file_path := path.Join(dir, name)
                 mod_time := file.ModTime().UnixNano()
 
-                if symlink {
+                if device {
+                  if size != 0 {
+                    log.Fatalf("character device with non-zero size is not a whiteout file.")
+                  }
+                  z.IncludeWhiteoutFile(name, mod_time)
+                } else if symlink {
                         // Symbolic link is an indirection, thus read and include
                         fmt.Printf("%v is symlink.", file_path)
                         real_dest, err := os.Readlink(file_path)
@@ -154,7 +164,7 @@ func (z *ZarManager) IncludeFolderBegin(name string, mod_time int64) {
                     End     : -1,
                     Name    : name,
                     Type    : Directory,
-                    ModTime	: mod_time,
+                    ModTime  : mod_time,
         }
 
         // Add to the image's Metadata at end
@@ -172,6 +182,18 @@ func (z *ZarManager) IncludeFolderEnd() {
 
         // Add to the image's Metadata at end
         z.Metadata = append(z.Metadata, *h)
+}
+
+func (z *ZarManager) IncludeWhiteoutFile(name string, mod_time int64) {
+  // Create the file Metadata
+  h := &FileMetadata{
+                  Begin   : -1,
+                  End     : -1,
+                  Name    : name,
+                  Type    : WhiteoutFile,
+                  ModTime : mod_time,
+  }
+  z.Metadata = append(z.Metadata, *h)
 }
 
 // IncludeSymlink adds Metadata to the image file for a symbolic link. This
