@@ -47,10 +47,11 @@ func (c *CManager) WalkDir(dir string, foldername string, root bool) {
 
                 switch action {
                 case "f":
-                        c.IncludeFile(name, path, 0)
+                        c.IncludeFile(name, path, 0, 0)
                         // TODO: change 0 to valid timestamp
+                        // TODO: change the second 0 to valid file mode
                 case "sd":
-                        c.IncludeFolderBegin(name, 0)
+                        c.IncludeFolderBegin(name, 0, 0)
                 case "ed":
                         c.IncludeFolderEnd()
                 default:
