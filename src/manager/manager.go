@@ -3,25 +3,30 @@ package manager
 
 
 import (
-  "encoding/gob"
-  "fmt"
-  "io/ioutil"
-  "log"
-  "os"
-  "path"
+	"bytes"
+	"encoding/base64"
+	"encoding/gob"
+	"fmt"
+	"io/ioutil"
+	"log"
+	"os"
+	"path"
 
-  "fileio/writer"
+	"fileio/writer"
+	"filter"
+	"stats"
+	"strings"
 )
 
 // fileType is an integer representating the file type (RegularFile, Directory, Symlink)
 type fileType int
 
 const (
-  // Represent the possible file types for files
-    RegularFile fileType = iota
-    Directory
-    Symlink
-    WhiteoutFile
+	// Represent the possible file types for files
+	RegularFile fileType = iota
+	Directory
+	Symlink
+	WhiteoutFile
 )
 
 // Manager is an interface for creating the image file.
@@ -33,7 +38,7 @@ type Manager interface {
         // Parameter (dir)              : name of path relative to root dir
         // parameter (foldername)       : name of current folder
         // parameter (root)             : whether or not dir is the root dir
-        WalkDir(dir string, foldername string, mod_time int64, root bool)
+        WalkDir(dir string, foldername string, mod_time int64, mode os.FileMode, root bool)
 
         // IncludeFolderBegin initializes Metadata for the beginning of a file
         //
@@ -50,7 +55,10 @@ type Manager interface {
         // return               : new offset into the image file
         IncludeFile(fn string, basedir string, mod_time int64) (int64, error)
 
-				IncludeWhiteoutFile(fn string, mod_time int64)
+	// TODO: Add IncludeWhiteoutFile and IncludeSymlink to interface
+
+	// GenerateFilter creates a filter based on the files in the img file
+	GenerateFilter()
 
         // WriterHeader writes the Metadata for the imagefile to the end of the image file.
         // The location of the beginning of the header is written at the very end as an int64
@@ -71,15 +79,14 @@ type FileMetadata struct {
         // If the file is a symlink, this entry is used for link info
         Link string
 
-        // File modification time
+	// File modification time
         ModTime int64
 
         // Type indicated the type of a specific file (dir, symlink or regular file)
         Type fileType
 
-        // File's mode and permission Bits
-        Mode os.FileMode
-
+	// TODO: What does this do
+	Mode os.FileMode
 }
 
 // Manager is the main driver of creating the image file. It writes the data and stores Metadata.
@@ -92,12 +99,21 @@ type ZarManager struct {
 
         // Metadata is a list of FileMetadata structs indicating start and end of directories and files
         Metadata []FileMetadata
+
+	// FilterMetadata is a struct refering to info about the bloom filter
+	FilterMetadata filter.FilterMetadata
+
+	// Statistics is a ImgStats struct that tracks relevant statistics for the image file
+	Statistics *stats.ImgStats
+
+	// Filter is a filter used for this image file
+	Filter *filter.BloomFilter
 }
 
 type DirInfo struct {
         Name string
         ModTime int64
-        Mode os.FileMode
+	Mode os.FileMode
 }
 
 // WalkDir implemented Manager.WalkDir
@@ -119,18 +135,18 @@ func (z *ZarManager) WalkDir(dir string, foldername string, mod_time int64, mode
         // Process each file in the directory
         for _, file := range files {
                 name := file.Name()
-                mode := file.Mode()
-                symlink := mode & os.ModeSymlink != 0
-                device := mode & os.ModeDevice != 0
-                size := file.Size()
-                file_path := path.Join(dir, name)
+		mode := file.Mode()
+                symlink := file.Mode() & os.ModeSymlink != 0
+                device := file.Mode() & os.ModeDevice != 0
+		size := file.Size()
+		file_path := path.Join(dir, name)
                 mod_time := file.ModTime().UnixNano()
 
-                if device {
-                  if size != 0 {
-                    log.Fatalf("character device with non-zero size is not a whiteout file.")
-                  }
-                  z.IncludeWhiteoutFile(name, mod_time)
+		if device {
+	                  if size != 0 {
+	                    log.Fatalf("character device with non-zero size is not a whiteout file.")
+	                  }
+	                  z.IncludeWhiteoutFile(name, mod_time)
                 } else if symlink {
                         // Symbolic link is an indirection, thus read and include
                         fmt.Printf("%v is symlink.", file_path)
@@ -166,16 +182,18 @@ func (z *ZarManager) WalkDir(dir string, foldername string, mod_time int64, mode
 // IncludeFolderBegin implements Manager.IncludeFolderBegin
 func (z *ZarManager) IncludeFolderBegin(name string, mod_time int64, mode os.FileMode) {
         h := &FileMetadata{
-                    Begin   : -1,
-                    End     : -1,
-                    Name    : name,
-                    Type    : Directory,
-                    ModTime : mod_time,
-                    Mode    : mode,
+		Begin   : -1,
+		End     : -1,
+		Name    : name,
+		Type    : Directory,
+		ModTime : mod_time,
+		Mode	: mode,
         }
 
         // Add to the image's Metadata at end
         z.Metadata = append(z.Metadata, *h)
+
+	z.Statistics.AddDir()
 }
 
 // IncludeFolderEnd implements IncludeFolderEnd
@@ -192,15 +210,15 @@ func (z *ZarManager) IncludeFolderEnd() {
 }
 
 func (z *ZarManager) IncludeWhiteoutFile(name string, mod_time int64) {
-  // Create the file Metadata
-  h := &FileMetadata{
-                  Begin   : -1,
-                  End     : -1,
-                  Name    : name,
-                  Type    : WhiteoutFile,
-                  ModTime : mod_time,
-  }
-  z.Metadata = append(z.Metadata, *h)
+	// Create the file Metadata
+	h := &FileMetadata{
+		  Begin   : -1,
+		  End     : -1,
+		  Name    : name,
+		  Type    : WhiteoutFile,
+		  ModTime : mod_time,
+	}
+	z.Metadata = append(z.Metadata, *h)
 }
 
 // IncludeSymlink adds Metadata to the image file for a symbolic link. This
@@ -211,21 +229,23 @@ func (z *ZarManager) IncludeWhiteoutFile(name string, mod_time int64) {
 // parameter (link)     : the actual path to the desired file
 // parameter (mod_time) : the modification time fo the file
 
-func (z *ZarManager) IncludeSymlink(name string, link string, mod_time int64, mode os.FileMode) {
+func (z *ZarManager) IncludeSymlink(name string, link string, modTime int64, mode os.FileMode) {
         h := &FileMetadata{
-                        Begin   : -1,
-                        End     : -1,
-                        Name    : name,
-                        Link    : link,
-                        Type    : Symlink,
-                        ModTime : mod_time,
-                        Mode    : mode,
+		Begin   : -1,
+		End     : -1,
+		Name    : name,
+		Link    : link,
+		Type    : Symlink,
+		ModTime : modTime,
+		Mode	: mode,
         }
         z.Metadata = append(z.Metadata, *h)
+
+	z.Statistics.AddSymLink()
 }
 
 // IncludeFile implements Manager.IncludeFile
-func (z *ZarManager) IncludeFile(fn string, basedir string, modTime int64, mode os.FileMode) (int64, error) {
+func (z *ZarManager) IncludeFile(fn string, basedir string, mod_time int64, mode os.FileMode) (int64, error) {
         content, err := ioutil.ReadFile(path.Join(basedir, fn))
         if err != nil {
                 log.Fatalf("can't include file %v, err: %v", fn, err)
@@ -234,7 +254,7 @@ func (z *ZarManager) IncludeFile(fn string, basedir string, modTime int64, mode 
 
         // Retrieve the current offset into the file and write the file contents
         oldCounter := z.Writer.Count
-        realEnd, err := z.Writer.Write(content, z.PageAlign)
+        real_end, err := z.Writer.Write(content, z.PageAlign)
         if err != nil {
                         log.Fatalf("can't write to file")
                         return 0, err
@@ -242,34 +262,151 @@ func (z *ZarManager) IncludeFile(fn string, basedir string, modTime int64, mode 
 
         // Create the file Metadata
         h := &FileMetadata{
-                        Begin   : oldCounter,
-                        End     : realEnd,
-                        Name    : fn,
-                        Type    : RegularFile,
-                        ModTime : modTime,
-                        Mode    : mode,
+		Begin   : oldCounter,
+		End     : real_end,
+		Name    : fn,
+		Type    : RegularFile,
+		ModTime : mod_time,
+		Mode	: mode,
         }
         z.Metadata = append(z.Metadata, *h)
 
-        return realEnd, err
+	z.Statistics.AddFile()
+
+        return real_end, err
 }
 
-// TODO: Is gob the best choice here?
+// GenerateFilter implements manager.GenerateFilter
+func (z *ZarManager) GenerateFilter() {
+	// Check type of filter -> Default BloomFilter, later pass in
+
+	// Create initial filter -> Default Bloom, but later have swithc statement
+	z.Filter = &filter.BloomFilter{NumElem:z.Statistics.NumFiles}
+
+	// Initialize filter (TODO: Check error)
+	z.Filter.Initialize()
+
+	// Construct filter
+	z.constructFilter()
+
+	// Create FilterMetadata
+	z.FilterMetadata = filter.FilterMetadata{
+		Active:true,
+		Name:"BloomFilter", // Default to BloomFilter
+	}
+
+	// TODO: Write filter to file here instead of in Header Method
+}
+
+// ConstructFilter initializes a filter by looping over FileMetadata
+// and adding each file to the filter
+// Algorithm: 
+//	- string to hold current path
+//	- When encounter startDir, append '/dirname' to string
+//	- When encounter file/symlink, hash string + filename into filter
+// 	- When encounter endDir, remove previous name from string
+func (z *ZarManager) constructFilter() {
+	fmt.Println("Constructing Filter")
+
+	var path = ""
+
+	for i:=0; i < len(z.Metadata); i++ {
+		name:=z.Metadata[i].Name
+		switch MetaType := z.Metadata[i].Type; MetaType {
+		case (RegularFile):
+			// Add to filter
+			z.Filter.AddElement([]byte(path + "/" + name))
+		case (Directory):
+			// Name = ".." means end of directory
+			if (name == "..") {
+				// Remove dir name at end
+				intPath := strings.Split(path, "/")
+				intPath = intPath[:len(intPath)-1]
+				path = strings.Join(intPath, "/")
+			} else {
+				path += "/" + name
+			}
+		case (Symlink):
+			// Treat like a file, add and hash
+			z.Filter.AddElement([]byte(path + "/" + name))
+		}
+	}
+}
+
+// TODO: Is gob the best choice here? Need to use it to encode structs
+// TODO: In future, can this be laid out as the struct, and directly mapped into memory?
+//	YES! Use BinaryMarshaler to make custom layout
 // WriteHeader implements Manager.WriteHeader
 func (z *ZarManager) WriteHeader() error {
+	z.WriteFileMetadata()
+
+	z.WriteFilterMetadata()
+
+	if err := z.Writer.Close(); err != nil {
+                log.Fatalf("can't close zar file: %v", err)
+        }
+        return nil
+}
+
+func (z *ZarManager) WriteFileMetadata() {
         headerLoc := z.Writer.Count     // Offset for Metadata in image file
         fmt.Printf("header location: %v bytes\n", headerLoc)
 
-        mEnc := gob.NewEncoder(z.Writer.W)
+	// Marshal metadata
+	gob.Register(FileMetadata{})
+
+	b := bytes.Buffer{}
+	e := gob.NewEncoder(&b)
+	err := e.Encode(z.Metadata)
+	if err != nil { fmt.Println(`failed gob Encode`, err) }
 
         fmt.Println("current Metadata:", z.Metadata)
-        mEnc.Encode(z.Metadata)
+	z.Writer.Write([]byte(base64.StdEncoding.EncodeToString(b.Bytes())), false) // Not pageAligned
 
         // Write location of Metadata to end of file
         z.Writer.WriteInt64(int64(headerLoc))
 
-        if err := z.Writer.Close(); err != nil {
-                log.Fatalf("can't close zar file: %v", err)
-        }
-        return nil
+	// Flush the writer
+	z.Writer.W.Flush()
+}
+
+func (z *ZarManager) WriteFilterMetadata() {
+	initLoc := z.Writer.Count
+
+	// Write filter data to file (Need to marshal Bloom Filter struct)
+	gob.Register(filter.BloomFilter{})
+
+	buf := bytes.Buffer{}
+	e := gob.NewEncoder(&buf)
+	err := e.Encode(z.Filter)
+	if err != nil { fmt.Println(`failed gob Encode`, err) }
+
+	fmt.Println("Writing BloomFilter:", z.Filter)
+	z.Writer.Write([]byte(base64.StdEncoding.EncodeToString(buf.Bytes())), false) // Not pageAligned
+
+	// Set size of BloomFilter
+        filterLoc := z.Writer.Count     // Offset for Metadata in image file
+
+	z.FilterMetadata.FilterLoc = initLoc
+	z.FilterMetadata.FilterStructSize = filterLoc - initLoc
+
+	// Write filter metadata to file
+        fmt.Printf("filter location: %v bytes\n", filterLoc)
+
+	// Marshal Metadata
+	gob.Register(filter.FilterMetadata{})
+
+	b := bytes.Buffer{}
+	e = gob.NewEncoder(&b)
+	err = e.Encode(z.FilterMetadata)
+	if err != nil { fmt.Println(`failed gob Encode`, err) }
+
+        fmt.Println("current FilterMetadata:", z.FilterMetadata)
+	z.Writer.Write([]byte(base64.StdEncoding.EncodeToString(b.Bytes())), false) // Not pageAligned
+
+	// Write location of Metadata to end of file
+        z.Writer.WriteInt64(int64(filterLoc))
+
+	// Flush the writer
+	z.Writer.W.Flush()
 }
