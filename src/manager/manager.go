@@ -32,92 +32,59 @@ const (
 // Manager is an interface for creating the image file.
 // This interface allows for multiple implementations of its creation.
 type Manager interface {
-        // WalkDir recursively traverses each directory below the root director and processes files
-        // by creating Metadata.
-        //
-        // Parameter (dir)              : name of path relative to root dir
-        // parameter (foldername)       : name of current folder
-        // parameter (root)             : whether or not dir is the root dir
-        WalkDir(dir string, foldername string, mod_time int64, mode os.FileMode, root bool)
+	// WalkDir recursively traverses each directory below the root director and processes files
+	// by creating Metadata.
+	//
+	// Parameter (dn)               : name of current directory
+	// parameter (rootdir)			: path of parent dir relative to root of image
+	// parameter (basedir)       	: absolute path of parent directory to dn
+	// parameter (root)             : whether or not dir is the root dir
+	WalkDir(dn, rootdir, basedir string, root bool)
 
-        // IncludeFolderBegin initializes Metadata for the beginning of a file
-        //
-        // parameter (name)     : name of the file beginning
-        IncludeFolderBegin(name string, mod_time int64, mode os.FileMode)
+	// AddDirectory either updates number of directories or adds name to the filter.
+	// If stat is false and current directory is a symlink, adds metadata for dir symlinks
+	//
+	// parameter (name)     : name of the current directory
+	// parameter (rootdir)	: path of parent dir relative to root of image
+	// parameter (basedir)  : absolute path of parent directory to dn
+	// parameter (stat)		: (true) - Increments element count, else adds path to filter 
+	AddDirectory(dn, rootdir, basedir string, stat bool)
 
-        // IncludeFolderEnd initializes Metadata for the end of a file
-        IncludeFolderEnd()
-
-        // IncludeFile reads the given file, adds it to the file, and creates the Metadata.
-        //
-        // parameter (fn)       : name of the file to be read
-        // paramter (basedir)   : name of the current directory relative to root
-        // return               : new offset into the image file
-        IncludeFile(fn string, basedir string, mod_time int64) (int64, error)
+	// AddFile either updates number of elements or adds file path to filter
+	//
+	// parameter (fn)       : name of the file to be read
+	// parameter (rootdir)	: path of parent dir relative to root of image
+	// paramter (stat)		: (true) - Increments element count, else adds path to filter
+	AddFile(fn, rootdir string, stat bool)
 
 	// TODO: Add IncludeWhiteoutFile and IncludeSymlink to interface
 
-	// GenerateFilter creates a filter based on the files in the img file
+	// GenerateFilter creates a filter based on the statistics
 	GenerateFilter()
 
-        // WriterHeader writes the Metadata for the imagefile to the end of the image file.
-        // The location of the beginning of the header is written at the very end as an int64
-        WriteHeader() error
-}
-
-// FileMetadata holds information for the location of a file in the image file
-type FileMetadata struct {
-        // Begin indicates the beginning of a file (pointer) in the file
-        Begin int64
-
-        // End indicates the ending of a file (pointer) in the file
-        End int64
-
-        // Name indicates the name of a specific file in the file
-        Name string
-
-        // If the file is a symlink, this entry is used for link info
-        Link string
-
-	// File modification time
-        ModTime int64
-
-        // Type indicated the type of a specific file (dir, symlink or regular file)
-        Type fileType
-
-	// TODO: What does this do
-	Mode os.FileMode
+	// WriterHeader writes the Metadata for the imagefile to the end of the image file.
+	// The location of the beginning of the header is written at the very end as an int64
+	WriteHeader() error
 }
 
 // Manager is the main driver of creating the image file. It writes the data and stores Metadata.
 type ZarManager struct {
-        // PageAlign indicates whether files will be aligned at page boundaries
-        PageAlign bool
-
-        // The FileWriter for this zar image
-        Writer writer.FileWriter
-
-        // Metadata is a list of FileMetadata structs indicating start and end of directories and files
-        Metadata []FileMetadata
-
-	// FilterMetadata is a struct refering to info about the bloom filter
-	FilterMetadata filter.FilterMetadata
+	// The FileWriter for this zar image
+	Writer writer.FileWriter
 
 	// Statistics is a ImgStats struct that tracks relevant statistics for the image file
 	Statistics *stats.ImgStats
 
+	// FilterMetadata is a struct refering to info about the filter
+	FilterMetadata filter.FilterMetadata
+
 	// Filter is a filter used for this image file
-	Filter *filter.BloomFilter
+	Filter *filter.Filter
 }
 
-type DirInfo struct {
-        Name string
-        ModTime int64
-	Mode os.FileMode
-}
 
 // WalkDir implemented Manager.WalkDir
-func (z *ZarManager) WalkDir(dir string, foldername string, mod_time int64, mode os.FileMode, root bool) {
+func (z *ZarManager) WalkDir(dn, rootdir, basedir string, root bool) {
         // root dir not marked as directory
         if !root {
                 fmt.Printf("including folder: %v, name: %v\n", dir, foldername)
@@ -134,13 +101,13 @@ func (z *ZarManager) WalkDir(dir string, foldername string, mod_time int64, mode
 
         // Process each file in the directory
         for _, file := range files {
-                name := file.Name()
-		mode := file.Mode()
-                symlink := file.Mode() & os.ModeSymlink != 0
-                device := file.Mode() & os.ModeDevice != 0
-		size := file.Size()
-		file_path := path.Join(dir, name)
-                mod_time := file.ModTime().UnixNano()
+			name := file.Name()
+			mode := file.Mode()
+			symlink := file.Mode() & os.ModeSymlink != 0
+			device := file.Mode() & os.ModeDevice != 0
+			size := file.Size()
+			file_path := path.Join(dir, name)
+            mod_time := file.ModTime().UnixNano()
 
 		if device {
 	                  if size != 0 {
@@ -178,102 +145,35 @@ func (z *ZarManager) WalkDir(dir string, foldername string, mod_time int64, mode
         }
 }
 
-// TODO: Change to interface for Metadata to have diff types of Metadata
 // IncludeFolderBegin implements Manager.IncludeFolderBegin
-func (z *ZarManager) IncludeFolderBegin(name string, mod_time int64, mode os.FileMode) {
-        h := &FileMetadata{
-		Begin   : -1,
-		End     : -1,
-		Name    : name,
-		Type    : Directory,
-		ModTime : mod_time,
-		Mode	: mode,
-        }
+func (z *ZarManager) AddDirectory(dn, rootdir, basedir string, stat bool) {
+	if (stat) {
+		z.Statistics.AddDir()
+	} else {
+		fullPath := path.Join(basedir, dn)
+		imgPath := path.Join(rootdir, dn)
+		isSymlink := file.Mode() & os.ModeSymlink != 0
+		
+		if (symlink) {
+			// Generate indirect path for metadata
+			// Create DirSymLink metadata
+		}
 
-        // Add to the image's Metadata at end
-        z.Metadata = append(z.Metadata, *h)
-
-	z.Statistics.AddDir()
-}
-
-// IncludeFolderEnd implements IncludeFolderEnd
-func (z *ZarManager) IncludeFolderEnd() {
-        h := &FileMetadata{
-                        Begin   : -1,
-                        End     : -1,
-                        Name    : "..",
-                        Type    : Directory,
-        }
-
-        // Add to the image's Metadata at end
-        z.Metadata = append(z.Metadata, *h)
-}
-
-func (z *ZarManager) IncludeWhiteoutFile(name string, mod_time int64) {
-	// Create the file Metadata
-	h := &FileMetadata{
-		  Begin   : -1,
-		  End     : -1,
-		  Name    : name,
-		  Type    : WhiteoutFile,
-		  ModTime : mod_time,
+		// Hashing imgPath because want the path relative to root of container
+		z.Filter.AddElement([]byte(imgPath))
 	}
-	z.Metadata = append(z.Metadata, *h)
-}
-
-// IncludeSymlink adds Metadata to the image file for a symbolic link. This
-// allows for paths to be indirections. Not included in interface because
-// not necessarily fundamental for correctness.
-//
-// parameter (name)     : name of file
-// parameter (link)     : the actual path to the desired file
-// parameter (mod_time) : the modification time fo the file
-
-func (z *ZarManager) IncludeSymlink(name string, link string, modTime int64, mode os.FileMode) {
-        h := &FileMetadata{
-		Begin   : -1,
-		End     : -1,
-		Name    : name,
-		Link    : link,
-		Type    : Symlink,
-		ModTime : modTime,
-		Mode	: mode,
-        }
-        z.Metadata = append(z.Metadata, *h)
-
-	z.Statistics.AddSymLink()
 }
 
 // IncludeFile implements Manager.IncludeFile
-func (z *ZarManager) IncludeFile(fn string, basedir string, mod_time int64, mode os.FileMode) (int64, error) {
-        content, err := ioutil.ReadFile(path.Join(basedir, fn))
-        if err != nil {
-                log.Fatalf("can't include file %v, err: %v", fn, err)
-                return 0, nil
-        }
+func (z *ZarManager) AddFile(fn, rootdir string, stat bool) {
+	if (stat) {
+		z.Statistics.AddFile()
+	} else {
+		imgPath := path.Join(rootdir, fn)
 
-        // Retrieve the current offset into the file and write the file contents
-        oldCounter := z.Writer.Count
-        real_end, err := z.Writer.Write(content, z.PageAlign)
-        if err != nil {
-                        log.Fatalf("can't write to file")
-                        return 0, err
-        }
-
-        // Create the file Metadata
-        h := &FileMetadata{
-		Begin   : oldCounter,
-		End     : real_end,
-		Name    : fn,
-		Type    : RegularFile,
-		ModTime : mod_time,
-		Mode	: mode,
-        }
-        z.Metadata = append(z.Metadata, *h)
-
-	z.Statistics.AddFile()
-
-        return real_end, err
+		// Hashing imgPath because want the path relative to root of container
+		z.Filter.AddElement([]byte(imgPath))
+	}
 }
 
 // GenerateFilter implements manager.GenerateFilter
